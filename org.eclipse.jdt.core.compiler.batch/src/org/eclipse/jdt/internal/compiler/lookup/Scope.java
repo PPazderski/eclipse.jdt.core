@@ -3178,6 +3178,7 @@ public abstract class Scope {
 	* from the binding & not assume the problem applies to the entire compoundName.
 	*/
 	public final Binding getPackage(char[][] compoundName) {
+		SplitPackageBinding.log("Search for package %s in %s", CharOperation.toString(compoundName), this.compilationUnitScope);
  		compilationUnitScope().recordQualifiedReference(compoundName);
 		Binding binding = getTypeOrPackage(compoundName[0], Binding.TYPE | Binding.PACKAGE, true);
 		if (binding == null) {

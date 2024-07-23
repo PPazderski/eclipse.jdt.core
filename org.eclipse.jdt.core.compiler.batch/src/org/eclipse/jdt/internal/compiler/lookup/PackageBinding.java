@@ -91,6 +91,9 @@ private void addNotFoundType(char[] simpleName) {
  */
 PackageBinding addPackage(PackageBinding element, ModuleBinding module) {
 	if ((element.tagBits & TagBits.HasMissingType) == 0) clearMissingTagBit();
+	if (this instanceof PlainPackageBinding && element instanceof SplitPackageBinding) {
+		SplitPackageBinding.log("WARN! Adding split binding %s as child of plain %s", SplitPackageBinding.format(element), SplitPackageBinding.format(this));
+	}
 	this.knownPackages.put(element.compoundName[element.compoundName.length - 1], element);
 	return element;
 }

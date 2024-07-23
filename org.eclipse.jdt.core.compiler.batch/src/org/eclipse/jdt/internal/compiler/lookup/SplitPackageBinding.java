@@ -22,6 +22,8 @@ import org.eclipse.jdt.core.compiler.CharOperation;
 public class SplitPackageBinding extends PackageBinding {
 	Set<ModuleBinding> declaringModules;
 	public Set<PlainPackageBinding> incarnations;
+	private boolean supressAddLog = true;
+	private static ThreadLocal<Integer> logIndent = ThreadLocal.withInitial(() -> Integer.valueOf(0));
 
 	/**
 	 * Combine two potential package bindings, answering either the better of those if the other has a problem,
@@ -47,8 +49,15 @@ public class SplitPackageBinding extends PackageBinding {
 			return previous;
 		if (binding.subsumes(previous))
 			return binding;
+		log("Combine bindings %s", format(previous));
+		incLogIndent();
+		log("and %s", format(binding));
+		log("for primary module %s", format(primaryModule));
 		SplitPackageBinding split = new SplitPackageBinding(previous, primaryModule);
 		split.add(binding);
+		log("New split binding %s", format(split));
+		decLogIndent();
+		split.supressAddLog = false;
 		return split;
 	}
 	private static int rank(PackageBinding candidate) {
@@ -61,6 +70,87 @@ public class SplitPackageBinding extends PackageBinding {
 		return 3;
 	}
 
+	public static void incLogIndent() {
+		int indent = logIndent.get();
+		indent++;
+		logIndent.set(indent);
+	}
+	public static void decLogIndent() {
+		int indent = logIndent.get();
+		indent--;
+		if(indent < 0) {
+			indent = 0;
+		}
+		logIndent.set(indent);
+	}
+	public static void resetLogIndent() {
+		logIndent.set(0);
+	}
+
+	public static void log(String format, Object... args) {
+		//if(true) return;
+		String threadName = format(Thread.currentThread());
+		if (threadName.equals("Java indexing") || threadName.equals("JavaReconciler") /*|| threadName.equals("main")*/) {
+			return;
+		}
+		int indent = logIndent.get();
+		StringBuilder sb = new StringBuilder();
+		sb.append("[" + threadName + "] ");
+		for (int i = 0; i < indent; i++) {
+			sb.append("  ");
+		}
+		if (args == null || args.length == 0) {
+			sb.append(format);
+		} else {
+			sb.append(format.formatted(args));
+		}
+		System.out.println(sb.toString());
+	}
+
+	public static String format(ModuleBinding module) {
+		if (module == null) {
+			return "<null>";
+		}
+		return module.getClass().getSimpleName() + "[" + new String(module.moduleName) + "]#" + System.identityHashCode(module);
+	}
+
+	public static String format(Thread t) {
+		String name = t.getName();
+		if (name == null) {
+			name = "";
+		}
+		int index = name.lastIndexOf(".");
+		if (index >= 0) {
+			name = name.substring(index + 1);
+		}
+		return name;
+	}
+
+	public static String format(PackageBinding binding) {
+		StringBuilder sb = new StringBuilder();
+		if (binding instanceof PlainPackageBinding) {
+			sb.append("plain");
+		} else if (binding instanceof SplitPackageBinding) {
+			sb.append("split");
+		} else if (binding == null) {
+			return "<null>";
+		} else {
+			sb.append("unknown");
+		}
+		sb.append("#" + System.identityHashCode(binding));
+		sb.append(" {" + binding + "}");
+		sb.append(" enclosing " + format(binding.enclosingModule));
+		return sb.toString();
+	}
+	public static String format(LookupEnvironment environment) {
+		StringBuilder sb = new StringBuilder();
+		sb.append(environment.getClass().getSimpleName() + "[" + format(environment.module) + "]#" + System.identityHashCode(environment));
+		if (environment.root != environment) {
+			sb.append(" -> " + format(environment.root));
+		}
+		return sb.toString();
+	}
+
 	public SplitPackageBinding(PackageBinding initialBinding, ModuleBinding primaryModule) {
 		super(initialBinding.compoundName, initialBinding.parent, primaryModule.environment, primaryModule);
 		this.declaringModules = new LinkedHashSet<>();
@@ -68,6 +158,9 @@ public class SplitPackageBinding extends PackageBinding {
 		add(initialBinding);
 	}
 	public void add(PackageBinding packageBinding) {
+		if (!supressAddLog) {
+			log("Extend split %s with binding %s", format(this), format(packageBinding));
+		}
 		if (packageBinding instanceof SplitPackageBinding) {
 			SplitPackageBinding split = (SplitPackageBinding) packageBinding;
 			this.declaringModules.addAll(split.declaringModules);
@@ -85,12 +178,19 @@ public class SplitPackageBinding extends PackageBinding {
 	}
 	@Override
 	PackageBinding addPackage(PackageBinding element, ModuleBinding module) {
+		PackageBinding inputBinding = element;
+		incLogIndent();
+		log("Add package binding %s to %s with module context %s", format(element), format(this), format(module));
 		char[] simpleName = element.compoundName[element.compoundName.length-1];
 		// enrich
 		element = combineWithSiblings(element, simpleName, module);
+		log("Enrichted sub-binding to %s from %s", format(element), format(inputBinding));
 
 		PackageBinding visible = this.knownPackages.get(simpleName);
+		PackageBinding previouslyKnown = visible;
 		visible = SplitPackageBinding.combine(element, visible, this.enclosingModule);
+		log("Register known package %s replacing %s", format(visible), format(previouslyKnown));
+		decLogIndent();
 		this.knownPackages.put(simpleName, visible);
 
 		// also record the PPB's as parent-child:
@@ -128,8 +228,12 @@ public class SplitPackageBinding extends PackageBinding {
 	@Override
 	PackageBinding getPackage0(char[] name) {
 		PackageBinding knownPackage = super.getPackage0(name);
-		if (knownPackage != null)
+		if (knownPackage != null) {
+			if (knownPackage == LookupEnvironment.TheNotFoundPackage) {
+				log("Reported package %s not found from cache for %s in getPackage0", new String(name), format(this));
+			}
 			return knownPackage;
+		}
 
 		PackageBinding candidate = null;
 		for (PackageBinding incarnation : this.incarnations) {
@@ -137,9 +241,21 @@ public class SplitPackageBinding extends PackageBinding {
 			if (package0 == null)
 				return null; // if any incarnation lacks cached info, a full findPackage will be necessary
 			candidate = combine(package0, candidate, this.enclosingModule);
+			/*if (candidate instanceof SplitPackageBinding && candidate == package0) {
+				candidate = new SplitPackageBinding(candidate, this.enclosingModule);
+			}*/
 		}
-		if (candidate != null)
+		if (candidate != null) {
+			log("Register known package %s in parent binding %s", format(candidate), format(this));
+			for (PackageBinding incarnation : this.incarnations) {
+				PackageBinding package0 = incarnation.getPackage0(name);
+				if (package0 instanceof SplitPackageBinding && package0 == candidate) {
+					log("ERROR! Adding reference to existing sub-package %s from incarnation %s to package binding %s",
+							format(candidate), format(incarnation), format(this));
+				}
+			}
 			this.knownPackages.put(name, candidate);
+		}
 
 		return candidate;
 	}
@@ -147,8 +263,12 @@ public class SplitPackageBinding extends PackageBinding {
 	@Override
 	PackageBinding getPackage0Any(char[] name) {
 		PackageBinding knownPackage = super.getPackage0(name);
-		if (knownPackage != null)
+		if (knownPackage != null) {
+			if (knownPackage == LookupEnvironment.TheNotFoundPackage) {
+				log("Reported package %s not found from cache for %s in getPackage0Any", new String(name), format(this));
+			}
 			return knownPackage;
+		}
 
 		PackageBinding candidate = null;
 		for (PackageBinding incarnation : this.incarnations) {
@@ -163,10 +283,17 @@ public class SplitPackageBinding extends PackageBinding {
 
 	@Override
 	protected PackageBinding findPackage(char[] name, ModuleBinding module) {
+		if (module != this.enclosingModule) {
+			log("WARN! My enclosing module %s does not match search context %s", format(this.enclosingModule), format(module));
+		}
+
+		log("Find package %s in %s with module context %s", new String(name), format(this), format(module));
+		incLogIndent();
 		char[][] subpackageCompoundName = CharOperation.arrayConcat(this.compoundName, name);
 		Set<PackageBinding> candidates = new LinkedHashSet<>();
 		for (ModuleBinding candidateModule : this.declaringModules) {
 			PackageBinding candidate = candidateModule.getVisiblePackage(subpackageCompoundName);
+			log("Declaring module %s contributed %s", format(candidateModule), format(candidate));
 			if (candidate != null
 					&& candidate != LookupEnvironment.TheNotFoundPackage
 					&& ((candidate.tagBits & TagBits.HasMissingType) == 0))
@@ -185,10 +312,19 @@ public class SplitPackageBinding extends PackageBinding {
 				split.add(iterator.next());
 			result = split;
 		}
+		decLogIndent();
+		log("Search result is %s", format(result));
 		if (result == null)
 			addNotFoundPackage(name);
-		else
+		else {
+			if (result.enclosingModule != this.enclosingModule) {
+				log("WARN! Resulting package binding %s has foreign enclosing module. Expected %s", format(result), format(this.enclosingModule));
+			}
+			if (result instanceof SplitPackageBinding && candidates.contains(result)) {
+				log("WARN! Adding non-unique split binding %s as package to %s", format(result), format(this));
+			}
 			addPackage(result, module);
+		}
 		return result;
 	}
 

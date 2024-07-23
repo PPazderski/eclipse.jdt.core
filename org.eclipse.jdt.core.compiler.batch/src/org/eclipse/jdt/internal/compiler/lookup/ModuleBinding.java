@@ -14,6 +14,8 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.lookup;
 
+import static org.eclipse.jdt.internal.compiler.lookup.SplitPackageBinding.format;
+
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -315,12 +317,14 @@ public class ModuleBinding extends Binding implements IUpdatableModule {
 	// ---
 	PlainPackageBinding createDeclaredToplevelPackage(char[] name) {
 		PlainPackageBinding packageBinding = new PlainPackageBinding(name, this.environment, this);
+		log("Register top level package %s as %s", new String(name), format(packageBinding));
 		this.declaredPackages.put(name, packageBinding);
 		return packageBinding;
 	}
 
 	PlainPackageBinding createDeclaredPackage(char[][] compoundName, PackageBinding parent) {
 		PlainPackageBinding packageBinding = new PlainPackageBinding(compoundName, parent, this.environment, this);
+		log("Register package %s as %s", CharOperation.toStrings(compoundName), format(packageBinding));
 		this.declaredPackages.put(CharOperation.concatWith(compoundName, '.'), packageBinding);
 		return packageBinding;
 	}
@@ -328,6 +332,7 @@ public class ModuleBinding extends Binding implements IUpdatableModule {
 	public PlainPackageBinding getOrCreateDeclaredPackage(char[][] compoundName) {
 		char[] flatName = CharOperation.concatWith(compoundName, '.');
 		PlainPackageBinding pkgBinding = this.declaredPackages.get(flatName);
+		PlainPackageBinding oldBinding = pkgBinding;
 		if (pkgBinding != null)
 			return pkgBinding;
 		if (compoundName.length > 1) {
@@ -340,6 +345,8 @@ public class ModuleBinding extends Binding implements IUpdatableModule {
 			if (problemPackage == LookupEnvironment.TheNotFoundPackage)
 				this.environment.knownPackages.put(compoundName[0], null); // forget TheNotFoundPackage if package was detected late (e.g. with APT in the loop)
 		}
+		if (oldBinding != null)
+			log("Replace declared package %s with %s replacing %s", new String(flatName), format(pkgBinding), format(oldBinding));
 		this.declaredPackages.put(flatName, pkgBinding);
 		return pkgBinding;
 	}
@@ -562,6 +569,10 @@ public class ModuleBinding extends Binding implements IUpdatableModule {
 			pkg = parent.getPackage0(name);
 		else
 			pkg = this.environment.getPackage0(name);
+		log("Start searching visible package %s in %s", new String(name), format(parent));
+		SplitPackageBinding.incLogIndent();
+		try {
+		log("Cache reported %s", format(pkg));
 		if (pkg != null) {
 			if (pkg == LookupEnvironment.TheNotFoundPackage)
 				return null;
@@ -574,6 +585,7 @@ public class ModuleBinding extends Binding implements IUpdatableModule {
 		char[][] subPkgCompoundName = CharOperation.arrayConcat(parentName, name);
 		char[] fullFlatName = CharOperation.concatWith(subPkgCompoundName, '.');
 		PackageBinding binding = this.declaredPackages.get(fullFlatName);
+		log("Package is declared as %s", format(binding));
 
 		char[][] declaringModuleNames = null;
 		if (this.environment.useModuleSystem) {
@@ -603,6 +615,7 @@ public class ModuleBinding extends Binding implements IUpdatableModule {
 							}
 						}
 					}
+					log("Declaring modules returned %s", format(binding));
 				}
 			}
 		} else {
@@ -614,11 +627,14 @@ public class ModuleBinding extends Binding implements IUpdatableModule {
 
 		assert binding == null || binding instanceof PlainPackageBinding || binding.enclosingModule == this;
 
+		log("Visible search result for %s in %s is %s", new String(name), format(parent), format(binding));
+
 		if (binding == null || !binding.isValidBinding()) {
 			if (parent != null) {
 				if (binding == null) {
 					parent.addNotFoundPackage(name);
 				} else {
+					log("Visible package search add known package %s in parent binding %s", format(binding), format(parent));
 					parent.knownPackages.put(name, binding);
 				}
 			} else {
@@ -628,11 +644,19 @@ public class ModuleBinding extends Binding implements IUpdatableModule {
 		}
 		// remember
 		if (parentName.length == 0) {
+			log("Visible package search add known package %s in environment %s", format(binding), format(this.environment));
 			this.environment.knownPackages.put(name, binding);
 		} else if (parent != null) {
 			binding = parent.addPackage(binding, this);
 		}
 		return binding;
+		} finally {
+			SplitPackageBinding.decLogIndent();
+		}
+	}
+
+	private static void log(String format, Object... args) {
+		SplitPackageBinding.log(format, args);
 	}
 
 	/**
@@ -648,26 +672,43 @@ public class ModuleBinding extends Binding implements IUpdatableModule {
 			return this.environment.defaultPackage;
 		}
 
+		log("Search visible package %s in module %s", CharOperation.toString(qualifiedPackageName), format(this));
+		SplitPackageBinding.incLogIndent();
+		try {
+
 		PackageBinding parent = getTopLevelPackage(qualifiedPackageName[0]);
+		log("Start with root package %s from environment %s", format(parent), format(this.environment));
 		if (parent == null)
 			return null;
 
 		// check each sub package
 		for (int i = 1; i < qualifiedPackageName.length; i++) {
 			PackageBinding binding = getVisiblePackage(parent, qualifiedPackageName[i]);
+			log("Sub package %s resolved with %s", new String(qualifiedPackageName[i]), format(binding));
 			if (binding == null) {
 				return null;
 			}
 			parent = binding;
 		}
 		return parent;
+		} finally {
+			SplitPackageBinding.decLogIndent();
+		}
 	}
 
 	PackageBinding combineWithPackagesFromOtherRelevantModules(PackageBinding currentBinding, char[][] compoundName, char[][] declaringModuleNames) {
-		for (ModuleBinding moduleBinding : otherRelevantModules(declaringModuleNames)) {
+		log("Combine %s for %s with other modules", format(currentBinding), CharOperation.toString(compoundName));
+		SplitPackageBinding.incLogIndent();
+
+		List<ModuleBinding> modules = otherRelevantModules(declaringModuleNames);
+		log("Other modules are %s", String.join(", ", modules.stream().filter(m -> this.environment == null || m != this.environment.JavaBaseModule).map(SplitPackageBinding::format).toList()));
+		for (ModuleBinding moduleBinding : modules) {
 			PlainPackageBinding nextBinding = moduleBinding.getDeclaredPackage(CharOperation.concatWith(compoundName, '.'));
+			if (nextBinding != null)
+				log("Module %s contributed %s", format(moduleBinding), format(nextBinding));
 			currentBinding = SplitPackageBinding.combine(nextBinding, currentBinding, this);
 		}
+		SplitPackageBinding.decLogIndent();
 		return currentBinding;
 	}
 

@@ -39,6 +39,9 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.lookup;
 
+import static org.eclipse.jdt.internal.compiler.lookup.SplitPackageBinding.log;
+import static org.eclipse.jdt.internal.compiler.lookup.SplitPackageBinding.format;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -1117,14 +1120,20 @@ public PackageBinding createPackage(char[][] compoundName) {
 	return createPlainPackage(compoundName);
 }
 public PlainPackageBinding createPlainPackage(char[][] compoundName) {
+	log("Create plain package binding for %s", CharOperation.toString(compoundName));
+	SplitPackageBinding.incLogIndent();
 	PackageBinding packageBinding = this.module.getDeclaredPackage(CharOperation.concatWith(compoundName, '.'));
+	log("Module declared package binding is %s", format(packageBinding));
 	if (packageBinding != null && packageBinding.isValidBinding()) {
 		// restart from the toplevel package to proceed with clash analysis below
 		packageBinding = this.getTopLevelPackage(compoundName[0]);
+		log("Replaced with top level binding %s", packageBinding);
 	} else {
 		packageBinding = getPackage0(compoundName[0]);
+		log("Replaced with cached root %s", format(packageBinding));
 		if (packageBinding == null || packageBinding == TheNotFoundPackage) {
 			packageBinding = this.module.getOrCreateDeclaredPackage(new char[][] {compoundName[0]});
+			log("Continue with declared binding %s", format(packageBinding));
 			if (this.useModuleSystem) {
 				char[][] declaringModuleNames = null;
 				if (this.module.isUnnamed()) {
@@ -1133,9 +1142,11 @@ public PlainPackageBinding createPlainPackage(char[][] compoundName) {
 				}
 				packageBinding = this.module.combineWithPackagesFromOtherRelevantModules(packageBinding, packageBinding.compoundName, declaringModuleNames);
 			}
+			log("Cache sub-name %s as known(?) package binding %s in parent %s", new String(compoundName[0]), format(packageBinding), format(this));
 			this.knownPackages.put(compoundName[0], packageBinding); // update in case of split package
 		}
 	}
+	SplitPackageBinding.decLogIndent();
 
 	for (int i = 1, length = compoundName.length; i < length; i++) {
 		// check to see if it collides with a known type...
