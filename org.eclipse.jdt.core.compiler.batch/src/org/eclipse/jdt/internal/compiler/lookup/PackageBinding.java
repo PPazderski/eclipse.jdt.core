@@ -17,6 +17,8 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.lookup;
 
+import static org.eclipse.jdt.internal.compiler.lookup.SplitPackageBinding.format;
+
 import java.util.ArrayList;
 import java.util.function.Predicate;
 
@@ -91,6 +93,12 @@ private void addNotFoundType(char[] simpleName) {
  */
 PackageBinding addPackage(PackageBinding element, ModuleBinding module) {
 	if ((element.tagBits & TagBits.HasMissingType) == 0) clearMissingTagBit();
+	if (this instanceof PlainPackageBinding && element instanceof SplitPackageBinding) {
+		SplitPackageBinding.log("ERROR! Adding split binding %s as child of plain %s", format(element), format(this));
+	}
+	if (element.parent != this) {
+		SplitPackageBinding.log("WARN! Adding child binding %s with unexpected parent. %s != %s", format(element), format(element.parent), format(this));
+	}
 	this.knownPackages.put(element.compoundName[element.compoundName.length - 1], element);
 	return element;
 }

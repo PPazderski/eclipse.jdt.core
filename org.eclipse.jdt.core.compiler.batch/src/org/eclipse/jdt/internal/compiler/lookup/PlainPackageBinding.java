@@ -31,6 +31,10 @@ public class PlainPackageBinding extends PackageBinding {
 	/** Create a normal package. */
 	public PlainPackageBinding(char[][] compoundName, PackageBinding parent, LookupEnvironment environment, ModuleBinding enclosingModule) {
 		super(compoundName, parent, environment, enclosingModule);
+		/*SplitPackageBinding.log("Created package binding %s", SplitPackageBinding.format(this));
+		SplitPackageBinding.incLogIndent();
+		SplitPackageBinding.log("for %s", new Exception().getStackTrace()[1]);
+		SplitPackageBinding.decLogIndent();*/
 	}
 
 	protected PlainPackageBinding(char[][] compoundName, LookupEnvironment environment) {

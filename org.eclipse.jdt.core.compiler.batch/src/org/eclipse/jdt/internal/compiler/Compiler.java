@@ -840,6 +840,8 @@ public class Compiler implements ITypeRequestor, ProblemSeverities {
 								new String(sourceUnits[i].getFileName())
 							}));
 					}
+					SplitPackageBinding.resetLogIndent();
+					SplitPackageBinding.log("Internal begin compile: %s", sourceUnits[i]);
 					// diet parsing for large collection of units
 					CompilationUnitDeclaration parsedUnit;
 					unitResult = new CompilationResult(sourceUnits[i], i, maxUnits, this.options.maxProblemsPerUnit);
@@ -885,6 +887,8 @@ public class Compiler implements ITypeRequestor, ProblemSeverities {
 	 */
 	public void process(CompilationUnitDeclaration unit, int i) {
 		this.lookupEnvironment.unitBeingCompleted = unit;
+		SplitPackageBinding.resetLogIndent();
+		SplitPackageBinding.log("Process compilation unit %s", unit.scope);
 		long parseStart = System.currentTimeMillis();
 
 		this.parser.getMethodBodies(unit);
